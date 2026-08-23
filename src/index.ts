@@ -8,121 +8,83 @@ type Props = {
 	name: string;
 	email: string;
 	accessToken: string;
-};
+} & Record<string, unknown>;
+
+const GSC_BASE = "https://www.googleapis.com/webmasters/v3";
 
 export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
 	server = new McpServer({
 		name: "Google Search Console",
-		version: "1.0.0",
+		version: "1.1.0",
 	});
+
+	private text(value: string) {
+		return { content: [{ type: "text" as const, text: value }] };
+	}
+
+	private async gscFetch(url: string, init?: RequestInit) {
+		const response = await fetch(url, {
+			...init,
+			headers: {
+				Authorization: `Bearer ${this.props.accessToken}`,
+				...(init?.headers ?? {}),
+			},
+		});
+
+		if (!response.ok) {
+			const detail = await response.text();
+			throw new Error(`Search Console ${response.status} — ${detail}`);
+		}
+
+		return response.json();
+	}
 
 	async init() {
 		// Liste les propriétés Search Console accessibles
 		this.server.tool(
 			"list_search_console_sites",
-			"Liste les sites Google Search Console accessibles par l'utilisateur.",
+			"Liste les propriétés Google Search Console accessibles par l'utilisateur.",
 			{},
 			async () => {
-				const response = await fetch(
-					"https://www.googleapis.com/webmasters/v3/sites",
-					{
-						headers: {
-							Authorization: `Bearer ${this.props.accessToken}`,
-						},
-					},
-				);
+				try {
+					const data: any = await this.gscFetch(`${GSC_BASE}/sites`);
+					const sites = (data.siteEntry ?? []).map((s: any) => ({
+						siteUrl: s.siteUrl,
+						permissionLevel: s.permissionLevel,
+					}));
 
-				if (!response.ok) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Erreur Google Search Console: ${response.status} ${await response.text()}`,
-							},
-						],
-					};
+					if (sites.length === 0) {
+						return this.text(
+							"Aucune propriété Search Console associée à ce compte Google.",
+						);
+					}
+
+					return this.text(JSON.stringify(sites, null, 2));
+				} catch (error) {
+					return this.text(`Erreur : ${(error as Error).message}`);
 				}
-
-				const data = await response.json();
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(data, null, 2),
-						},
-					],
-				};
 			},
 		);
 
 		// Analyse les performances Search Console
 		this.server.tool(
 			"search_console_performance",
-			"Récupère les performances Google Search Console : clics, impressions, CTR et position.",
+			"Performances Google Search Console : clics, impressions, CTR et position moyenne.",
 			{
-				siteUrl: z.string().describe(
-					"URL exacte de la propriété Search Console, par exemple sc-domain:cyclesfayah.fr",
-				),
-				startDate: z.string().describe("Date de début YYYY-MM-DD"),
-				endDate: z.string().describe("Date de fin YYYY-MM-DD"),
+				siteUrl: z
+					.string()
+					.describe(
+						"URL exacte de la propriété, par exemple sc-domain:cyclesfayah.fr",
+					),
+				startDate: z.string().describe("Date de début au format YYYY-MM-DD"),
+				endDate: z.string().describe("Date de fin au format YYYY-MM-DD"),
 				dimensions: z
 					.array(z.enum(["query", "page", "country", "device", "date"]))
 					.optional()
-					.describe("Dimensions à analyser"),
-				rowLimit: z.number().int().min(1).max(25000).optional(),
-			},
-			async ({ siteUrl, startDate, endDate, dimensions, rowLimit }) => {
-				const response = await fetch(
-					`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(
-						siteUrl,
-					)}/searchAnalytics/query`,
-					{
-						method: "POST",
-						headers: {
-							Authorization: `Bearer ${this.props.accessToken}`,
-							"Content-Type": "application/json",
-						},
-						body: JSON.stringify({
-							startDate,
-							endDate,
-							dimensions: dimensions ?? ["query"],
-							rowLimit: rowLimit ?? 1000,
-						}),
-					},
-				);
-
-				if (!response.ok) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Erreur Google Search Console: ${response.status} ${await response.text()}`,
-							},
-						],
-					};
-				}
-
-				const data = await response.json();
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(data, null, 2),
-						},
-					],
-				};
-			},
-		);
-	}
-}
-
-export default new OAuthProvider({
-	apiHandler: MyMCP.serve("/mcp"),
-	apiRoute: "/mcp",
-	authorizeEndpoint: "/authorize",
-	clientRegistrationEndpoint: "/register",
-	defaultHandler: GoogleHandler as any,
-	tokenEndpoint: "/token",
-});
+					.describe("Dimensions à analyser. Par défaut : query"),
+				rowLimit: z
+					.number()
+					.int()
+					.min(1)
+					.max(25000)
+					.
