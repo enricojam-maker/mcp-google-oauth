@@ -87,4 +87,81 @@ export class MyMCP extends McpAgent<Env, Record<string, never>, Props> {
 					.int()
 					.min(1)
 					.max(25000)
-					.
+					.optional()
+					.describe("Nombre de lignes. Par défaut : 1000"),
+			},
+			async ({ siteUrl, startDate, endDate, dimensions, rowLimit }) => {
+				try {
+					const data: any = await this.gscFetch(
+						`${GSC_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+						{
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								startDate,
+								endDate,
+								dimensions: dimensions ?? ["query"],
+								rowLimit: rowLimit ?? 1000,
+							}),
+						},
+					);
+
+					const rows = data.rows ?? [];
+
+					if (rows.length === 0) {
+						return this.text(
+							`Aucune donnée pour ${siteUrl} entre ${startDate} et ${endDate}.`,
+						);
+					}
+
+					return this.text(JSON.stringify(rows, null, 2));
+				} catch (error) {
+					return this.text(`Erreur : ${(error as Error).message}`);
+				}
+			},
+		);
+
+		// Détail d'indexation d'une URL
+		this.server.tool(
+			"inspect_url",
+			"Inspecte l'état d'indexation d'une URL précise dans Google.",
+			{
+				siteUrl: z
+					.string()
+					.describe("Propriété Search Console, ex: sc-domain:cyclesfayah.fr"),
+				inspectionUrl: z
+					.string()
+					.describe("URL complète à inspecter, ex: https://cyclesfayah.fr/faq/"),
+			},
+			async ({ siteUrl, inspectionUrl }) => {
+				try {
+					const data: any = await this.gscFetch(
+						"https://searchconsole.googleapis.com/v1/urlInspection/index:inspect",
+						{
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								siteUrl,
+								inspectionUrl,
+								languageCode: "fr",
+							}),
+						},
+					);
+
+					return this.text(JSON.stringify(data, null, 2));
+				} catch (error) {
+					return this.text(`Erreur : ${(error as Error).message}`);
+				}
+			},
+		);
+	}
+}
+
+export default new OAuthProvider({
+	apiHandler: MyMCP.serve("/mcp") as any,
+	apiRoute: "/mcp",
+	authorizeEndpoint: "/authorize",
+	clientRegistrationEndpoint: "/register",
+	defaultHandler: GoogleHandler as any,
+	tokenEndpoint: "/token",
+});
